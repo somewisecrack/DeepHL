@@ -1,0 +1,12 @@
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+# Keep directories, ignore live learned state by default
+/data/replay/*.jsonl
+/data/checkpoints/*.npz
+/data/logs/*
+!.gitkeep
