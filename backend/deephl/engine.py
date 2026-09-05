@@ -21,6 +21,9 @@ class DeepHLEngine:
         self.replay = ReplayStore(data_dir / "replay" / f"{self.market_label}.jsonl")
         self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=data_dir / "checkpoints" / f"{self.market_label}.npz")
         self.latest_book: L2Book | None = None
+        self.book_updates = 0
+        self.last_book_wall_ms = 0
+        self.ws_status = "idle"
         self.running = False
         self.ws_task: asyncio.Task | None = None
         self.loop_task: asyncio.Task | None = None
@@ -55,6 +58,9 @@ class DeepHLEngine:
         self.replay = ReplayStore(self.data_dir / "replay" / f"{label}.jsonl")
         self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{label}.npz")
         self.latest_book = None
+        self.book_updates = 0
+        self.last_book_wall_ms = 0
+        self.ws_status = "idle"
         self.last_state = None
         self.last_action = None
         if was: await self.start()
@@ -63,13 +69,22 @@ class DeepHLEngine:
     async def _ws_loop(self):
         while self.running:
             try:
+                self.ws_status = "connecting"
+                await self._publish()
                 async with websockets.connect("wss://api.hyperliquid.xyz/ws", ping_interval=20) as ws:
+                    self.ws_status = "connected"
                     await ws.send(json.dumps({"method":"subscribe","subscription":{"type":"l2Book","coin":self.coin}}))
                     async for msg in ws:
                         if not self.running: break
                         book = self._parse_book(msg)
-                        if book: self.latest_book = book
-            except Exception:
+                        if book:
+                            self.latest_book = book
+                            self.book_updates += 1
+                            self.last_book_wall_ms = int(time.time() * 1000)
+                            await self._publish()
+            except Exception as e:
+                self.ws_status = f"reconnecting: {type(e).__name__}"
+                await self._publish()
                 await asyncio.sleep(3)
 
     def _parse_book(self, msg: str) -> L2Book | None:
@@ -105,8 +120,13 @@ class DeepHLEngine:
     def snapshot(self) -> dict:
         book = self.latest_book
         pos = self.broker.position
+        now_ms = int(time.time() * 1000)
         return {
             "running": self.running,
+            "wsStatus": self.ws_status,
+            "bookUpdates": self.book_updates,
+            "bookExchangeTime": book.time_ms if book else 0,
+            "bookAgeMs": max(0, now_ms - self.last_book_wall_ms) if self.last_book_wall_ms else 0,
             "market": self.market_label,
             "coin": self.coin,
             "markets": DEFAULT_MARKETS,

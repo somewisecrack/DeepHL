@@ -19,13 +19,14 @@ function App(){
         <button className="primary" onClick={()=>fetch(API+'/api/start',{method:'POST'})} disabled={s.running}><Play size={17}/> Start training</button>
         <button onClick={()=>fetch(API+'/api/stop',{method:'POST'})} disabled={!s.running}><Pause size={17}/> Stop</button>
       </div>
-      <div className="status"><span className={s.running?'dot live':'dot'} /> {s.running?'LIVE TRAINING':'PAUSED'} · {s.coin}</div>
+      <div className="status"><span className={s.running?'dot live':'dot'} /> {s.running?'LIVE TRAINING':'PAUSED'} · {s.coin} · WS {s.wsStatus || 'idle'} · L2 #{s.bookUpdates || 0} · age {s.bookAgeMs || 0}ms</div>
     </section>
 
     <section className="grid top">
       <Metric icon={<Zap/>} label="Virtual PnL" value={`${fmtSigned(s.equity)} USDC`} tone={pnlColor}/>
       <Metric icon={<Activity/>} label="Last reward" value={fmtSigned(s.lastReward)} tone={(s.lastReward||0)>=0?'good':'bad'}/>
       <Metric icon={<Database/>} label="Replay" value={s.replay.toLocaleString()} sub="durable JSONL"/>
+      <Metric icon={<Radio/>} label="L2 updates" value={(s.bookUpdates||0).toLocaleString()} sub={`age ${s.bookAgeMs||0}ms`}/>
       <Metric icon={<Brain/>} label="Updates" value={s.updates.toLocaleString()} sub={`ε ${s.epsilon.toFixed(3)}`}/>
     </section>
 
@@ -33,6 +34,7 @@ function App(){
       <div><label>Market</label><select value={s.market} onChange={e=>fetch(API+'/api/market',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({market:e.target.value})})} disabled={s.running}>{Object.keys(s.markets).map(k=><option key={k}>{k}</option>)}</select></div>
       <div><label>Mid</label><strong>{num(s.mid)}</strong></div>
       <div><label>Spread</label><strong>{(s.spreadBps||0).toFixed(3)} bps</strong></div>
+      <div><label>Book time</label><strong>{s.bookExchangeTime ? new Date(s.bookExchangeTime).toLocaleTimeString() : '—'}</strong></div>
       <div><label>Position</label><strong>{s.position?`${s.position.side} @ ${num(s.position.entryPx)}`:'flat'}</strong></div>
       <div><label>Last action</label><strong>{s.lastAction}</strong><small>{s.reason}</small></div>
     </section>
