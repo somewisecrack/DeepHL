@@ -1,0 +1,25 @@
+#!/bin/zsh
+PROJECT="/Users/rahulgirishkumar/PROJECTS/DeepHL"
+LOGDIR="$PROJECT/data/logs"
+mkdir -p "$LOGDIR"
+
+cd "$PROJECT/backend" || exit 1
+if ! /usr/sbin/lsof -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+  if [ ! -x ".venv/bin/uvicorn" ]; then
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt >> "$LOGDIR/backend-install.log" 2>&1
+  fi
+  nohup .venv/bin/uvicorn deephl.app:app --host 127.0.0.1 --port 8000 >> "$LOGDIR/backend.log" 2>&1 &
+fi
+
+cd "$PROJECT/frontend" || exit 1
+if [ ! -d "node_modules" ]; then
+  npm install >> "$LOGDIR/frontend-install.log" 2>&1
+fi
+if ! /usr/sbin/lsof -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then
+  nohup npm run dev -- --host 127.0.0.1 >> "$LOGDIR/frontend.log" 2>&1 &
+fi
+
+sleep 2
+open "http://localhost:5173"
+exit 0
