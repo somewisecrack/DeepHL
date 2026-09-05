@@ -1,25 +1,45 @@
 #!/bin/zsh
+set -u
+
 PROJECT="/Users/rahulgirishkumar/PROJECTS/DeepHL"
 LOGDIR="$PROJECT/data/logs"
+PYTHON="/opt/homebrew/bin/python3"
+NPM="/opt/homebrew/bin/npm"
+OPEN_URL="http://127.0.0.1:5173"
 mkdir -p "$LOGDIR"
 
+wait_for_port() {
+  local port="$1"
+  local tries="$2"
+  local i=0
+  while [ "$i" -lt "$tries" ]; do
+    if /usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 cd "$PROJECT/backend" || exit 1
-if ! /usr/sbin/lsof -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+if ! /usr/sbin/lsof -nP -iTCP:18987 -sTCP:LISTEN >/dev/null 2>&1; then
   if [ ! -x ".venv/bin/uvicorn" ]; then
-    python3 -m venv .venv
+    "$PYTHON" -m venv .venv >> "$LOGDIR/backend-install.log" 2>&1
     .venv/bin/pip install -r requirements.txt >> "$LOGDIR/backend-install.log" 2>&1
   fi
-  nohup .venv/bin/uvicorn deephl.app:app --host 127.0.0.1 --port 8000 >> "$LOGDIR/backend.log" 2>&1 &
+  nohup .venv/bin/uvicorn deephl.app:app --host 127.0.0.1 --port 18987 >> "$LOGDIR/backend.log" 2>&1 &
 fi
 
 cd "$PROJECT/frontend" || exit 1
 if [ ! -d "node_modules" ]; then
-  npm install >> "$LOGDIR/frontend-install.log" 2>&1
+  "$NPM" install >> "$LOGDIR/frontend-install.log" 2>&1
 fi
-if ! /usr/sbin/lsof -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then
-  nohup npm run dev -- --host 127.0.0.1 >> "$LOGDIR/frontend.log" 2>&1 &
+if ! /usr/sbin/lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then
+  nohup "$NPM" run dev -- --host 127.0.0.1 --port 5173 >> "$LOGDIR/frontend.log" 2>&1 &
 fi
 
-sleep 2
-open "http://localhost:5173"
+wait_for_port 18987 20
+wait_for_port 5173 30
+open "$OPEN_URL"
 exit 0

@@ -3,7 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {Activity, Brain, Database, Pause, Play, Radio, Zap} from 'lucide-react';
 import './style.css';
 
-const API = import.meta.env.VITE_API || 'http://localhost:8000';
+const API = import.meta.env.VITE_API || 'http://127.0.0.1:18987';
 const actions = ['WAIT','LONG','SHORT','HOLD','EXIT'];
 
 function App(){
