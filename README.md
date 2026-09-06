@@ -67,7 +67,7 @@ data/
 - Replay is appended on every transition.
 - Checkpoints save every 100 updates and on stop.
 - Replay compacts on stop.
-- Reset Learning archives the current replay/checkpoint and starts clean.
+- Reset Learning hard-stops training, archives the active replay/checkpoint, and clears runtime counters, book state, trades, PnL, learner updates, and replay from the visible session.
 - Market-specific learning state is restored on app restart.
 
 This survives app/backend restarts and browser closes. It does not survive deleting the repo/data directory.

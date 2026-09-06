@@ -16,9 +16,9 @@ function App(){
     <section className="hero card">
       <div className="brand"><img src="/icon.jpeg"/><div><h1>DeepHL</h1><p>L2-only reinforcement lab for HyperLiquid perps</p></div></div>
       <div className="controls">
-        <button className="primary" onClick={()=>fetch(API+'/api/start',{method:'POST'})} disabled={s.running}><Play size={17}/> Start training</button>
-        <button onClick={()=>fetch(API+'/api/stop',{method:'POST'})} disabled={!s.running}><Pause size={17}/> Stop</button>
-        <button className="danger" onClick={()=>{ if(confirm('Archive current checkpoint/replay and restart learning from scratch?')) fetch(API+'/api/reset',{method:'POST'}) }}><Zap size={17}/> Reset learning</button>
+        <button className="primary" onClick={()=>fetch(API+'/api/start',{method:'POST'}).then(r=>r.json()).then(setS)} disabled={s.running}><Play size={17}/> Start training</button>
+        <button onClick={()=>fetch(API+'/api/stop',{method:'POST'}).then(r=>r.json()).then(setS)} disabled={!s.running}><Pause size={17}/> Stop</button>
+        <button className="danger" onClick={()=>{ if(confirm('Hard reset: stop training, archive active replay/checkpoint, and clear all visible runtime stats?')) fetch(API+'/api/reset',{method:'POST'}).then(r=>r.json()).then(setS) }}><Zap size={17}/> Reset learning</button>
       </div>
       <div className="status"><span className={s.running?'dot live':'dot'} /> {s.running?'LIVE TRAINING':'PAUSED'} · {s.coin} · WS {s.wsStatus || 'idle'} · L2 #{s.bookUpdates || 0} · age {s.bookAgeMs || 0}ms</div>
     </section>
@@ -33,7 +33,7 @@ function App(){
     </section>
 
     <section className="card panelRow">
-      <div><label>Market</label><select value={s.market} onChange={e=>fetch(API+'/api/market',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({market:e.target.value})})} disabled={s.running}>{Object.keys(s.markets).map(k=><option key={k}>{k}</option>)}</select></div>
+      <div><label>Market</label><select value={s.market} onChange={e=>fetch(API+'/api/market',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({market:e.target.value})}).then(r=>r.json()).then(setS)} disabled={s.running}>{Object.keys(s.markets).map(k=><option key={k}>{k}</option>)}</select></div>
       <div><label>Mid</label><strong>{num(s.mid)}</strong></div>
       <div><label>Spread</label><strong>{(s.spreadBps||0).toFixed(3)} bps</strong></div>
       <div><label>Book time</label><strong>{s.bookExchangeTime ? new Date(s.bookExchangeTime).toLocaleTimeString() : '—'}</strong></div>

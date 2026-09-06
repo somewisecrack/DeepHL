@@ -81,32 +81,42 @@ class DeepHLEngine:
         self.ws_task = asyncio.create_task(self._ws_loop())
         self.loop_task = asyncio.create_task(self._decision_loop())
 
-    async def stop(self):
+    async def stop(self, *, save: bool = True):
         self.running = False
-        for task in [self.ws_task, self.loop_task]:
-            if task: task.cancel()
-        self.agent.save()
-        self.replay.compact()
+        tasks = [t for t in [self.ws_task, self.loop_task] if t]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.ws_task = None
+        self.loop_task = None
+        self.ws_status = "idle"
+        if save:
+            self.agent.save()
+            self.replay.compact()
         await self._publish()
 
     async def reset_learning(self):
-        was = self.running
-        if was:
-            await self.stop()
+        # Hard reset means: stop training, cancel WS/decision tasks, archive active
+        # replay/checkpoint, and clear all visible runtime/training/trade counters.
+        await self.stop(save=False)
         ts = int(time.time())
         for path in [self.data_dir / "replay" / f"{self.market_label}.jsonl", self.data_dir / "checkpoints" / f"{self.market_label}.npz"]:
             if path.exists():
                 path.rename(path.with_name(f"{path.stem}.archive-{ts}{path.suffix}"))
         self.features = L2FeatureBuilder(self.depth)
         self.broker = VirtualPerpBroker()
-        await self.refresh_costs()
         self.replay = ReplayStore(self.data_dir / "replay" / f"{self.market_label}.jsonl")
         self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{self.market_label}.npz")
-        self.last_equity = None
+        self.latest_book = None
+        self.book_updates = 0
+        self.last_book_wall_ms = 0
         self.last_decision_book_time_ms = 0
+        self.ws_status = "idle"
+        self.step = 0
+        self.last_equity = None
+        self.last_q = [0.0] * 5
         self.last_result = {"action":"WAIT","reward":0,"equity":0,"realized":0,"reason":"reset_learning"}
-        if was:
-            await self.start()
         await self._publish()
 
     async def set_market(self, label: str):
