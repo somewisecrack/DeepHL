@@ -47,20 +47,22 @@ class VirtualPerpBroker:
             fill = self._walk_notional(book.asks, self.notional_usd)
             if fill:
                 px, qty = fill
-                self.cash_pnl -= self.notional_usd * self.cross_fee_rate
+                fee = self.notional_usd * self.cross_fee_rate
+                self.cash_pnl -= fee
                 self.position = Position(Side.LONG, px, qty, step, now)
                 self.last_funding_ms = now
                 reason = "enter_long"
-                self.trades.append({"ts_ms": now, "event": reason, "px": px, "qty": qty, "pnl": 0})
+                self.trades.append({"ts_ms": now, "event": reason, "px": px, "qty": qty, "gross": 0.0, "fee": fee, "pnl": -fee})
         elif effective == Action.ENTER_SHORT and self.position is None:
             fill = self._walk_notional(book.bids, self.notional_usd)
             if fill:
                 px, qty = fill
-                self.cash_pnl -= self.notional_usd * self.cross_fee_rate
+                fee = self.notional_usd * self.cross_fee_rate
+                self.cash_pnl -= fee
                 self.position = Position(Side.SHORT, px, qty, step, now)
                 self.last_funding_ms = now
                 reason = "enter_short"
-                self.trades.append({"ts_ms": now, "event": reason, "px": px, "qty": qty, "pnl": 0})
+                self.trades.append({"ts_ms": now, "event": reason, "px": px, "qty": qty, "gross": 0.0, "fee": fee, "pnl": -fee})
         elif effective == Action.EXIT and self.position:
             pos = self.position
             px = self._walk_qty(book.bids if pos.side == Side.LONG else book.asks, pos.qty)
@@ -72,7 +74,7 @@ class VirtualPerpBroker:
                 self.position = None
                 self.last_funding_ms = None
                 reason = "forced_exit_max_hold" if forced else "exit"
-                self.trades.append({"ts_ms": now, "event": reason, "px": px, "qty": pos.qty, "pnl": realized})
+                self.trades.append({"ts_ms": now, "event": reason, "px": px, "qty": pos.qty, "gross": gross, "fee": fee, "pnl": realized})
         after = self.equity(book)
         return {"action": effective.name, "reward": after - before, "equity": after, "realized": realized, "reason": reason}
 

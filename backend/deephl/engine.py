@@ -191,6 +191,8 @@ class DeepHLEngine:
         book = self.latest_book
         pos = self.broker.position
         now_ms = int(time.time() * 1000)
+        rewards = [float(t.reward) for t in self.replay.data]
+        exits = [t for t in self.broker.trades if t.get("event") in {"exit", "forced_exit_max_hold"}]
         return {
             "running": self.running,
             "wsStatus": self.ws_status,
@@ -207,6 +209,7 @@ class DeepHLEngine:
             "position": None if not pos else {"side": pos.side.name, "entryPx": pos.entry_px, "qty": pos.qty},
             "equity": self.last_result["equity"],
             "realizedPnl": self.broker.cash_pnl,
+            "unrealizedPnl": self.broker.unrealized(book) if book else 0.0,
             "lastAction": self.last_result["action"],
             "lastReward": self.last_result["reward"],
             "reason": self.last_result["reason"],
@@ -215,6 +218,19 @@ class DeepHLEngine:
             "epsilon": self.agent.epsilon,
             "qValues": self.last_q,
             "costs": self.broker.costs(),
+            "rewardStats": {
+                "positive": sum(1 for r in rewards if r > 0),
+                "negative": sum(1 for r in rewards if r < 0),
+                "zero": sum(1 for r in rewards if r == 0),
+                "max": max(rewards) if rewards else 0.0,
+                "min": min(rewards) if rewards else 0.0,
+            },
+            "closedTradeStats": {
+                "count": len(exits),
+                "positive": sum(1 for t in exits if float(t.get("pnl", 0)) > 0),
+                "max": max([float(t.get("pnl", 0)) for t in exits], default=0.0),
+                "min": min([float(t.get("pnl", 0)) for t in exits], default=0.0),
+            },
             "trades": self.broker.trades[-50:],
         }
 

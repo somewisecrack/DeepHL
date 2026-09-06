@@ -25,7 +25,7 @@ function App(){
 
     <section className="grid top">
       <Metric icon={<Zap/>} label="Virtual PnL" value={`${fmtSigned(s.equity)} USDC`} tone={pnlColor}/>
-      <Metric icon={<Activity/>} label="Last reward" value={fmtSigned(s.lastReward)} tone={(s.lastReward||0)>=0?'good':'bad'}/>
+      <Metric icon={<Activity/>} label="Last reward" value={fmtSigned(s.lastReward)} tone={(s.lastReward||0)>=0?'good':'bad'} sub={`+${s.rewardStats?.positive||0} / -${s.rewardStats?.negative||0}`}/>
       <Metric icon={<Database/>} label="Replay" value={s.replay.toLocaleString()} sub="durable JSONL"/>
       <Metric icon={<Radio/>} label="L2 updates" value={(s.bookUpdates||0).toLocaleString()} sub={`age ${s.bookAgeMs||0}ms`}/>
       <Metric icon={<Brain/>} label="Updates" value={s.updates.toLocaleString()} sub={`ε ${s.epsilon.toFixed(3)}`}/>
@@ -37,7 +37,7 @@ function App(){
       <div><label>Mid</label><strong>{num(s.mid)}</strong></div>
       <div><label>Spread</label><strong>{(s.spreadBps||0).toFixed(3)} bps</strong></div>
       <div><label>Book time</label><strong>{s.bookExchangeTime ? new Date(s.bookExchangeTime).toLocaleTimeString() : '—'}</strong></div>
-      <div><label>Position</label><strong>{s.position?`${s.position.side} @ ${num(s.position.entryPx)}`:'flat'}</strong></div>
+      <div><label>Position</label><strong>{s.position?`${s.position.side} @ ${num(s.position.entryPx)}`:'flat'}</strong><small>unreal {fmtSigned(s.unrealizedPnl)}</small></div>
       <div><label>Last action</label><strong>{s.lastAction}</strong><small>{s.reason}</small></div>
       <div><label>Funding/hr</label><strong>{bps(s.costs?.fundingRateHourly)} bps</strong><small>{s.costs?.source || 'not loaded'}</small></div>
     </section>
@@ -47,7 +47,7 @@ function App(){
       <div className="card"><h2><Brain/> Policy monitor</h2><p className="muted">Masked Double-Q learner. Inputs are only L2 book shape + virtual position state.</p><div className="qgrid">{s.qValues.map((q,i)=><div key={actions[i]} className="q"><span>{actions[i]}</span><b>{q.toFixed(4)}</b><i style={{width:`${Math.abs(q)/qmax*100}%`}} /></div>)}</div></div>
     </section>
 
-    <section className="card"><h2>Virtual trade ledger</h2><table><thead><tr><th>Event</th><th>Price</th><th>Qty</th><th>PnL</th></tr></thead><tbody>{[...s.trades].reverse().map((t,i)=><tr key={i}><td>{t.event}</td><td>{num(t.px)}</td><td>{Number(t.qty).toFixed(5)}</td><td className={t.pnl>=0?'good':'bad'}>{fmtSigned(t.pnl)}</td></tr>)}</tbody></table></section>
+    <section className="card"><h2>Virtual trade ledger</h2><p className="muted">Closed exits positive: {s.closedTradeStats?.positive||0}/{s.closedTradeStats?.count||0}. Table separates gross move, HyperLiquid fee, and net ledger PnL.</p><table><thead><tr><th>Event</th><th>Price</th><th>Qty</th><th>Gross</th><th>Fee</th><th>Net PnL</th></tr></thead><tbody>{[...s.trades].reverse().map((t,i)=><tr key={i}><td>{t.event}</td><td>{num(t.px)}</td><td>{Number(t.qty).toFixed(5)}</td><td className={(t.gross||0)>=0?'good':'bad'}>{fmtSigned(t.gross||0)}</td><td className="bad">-{Number(t.fee||0).toFixed(4)}</td><td className={t.pnl>=0?'good':'bad'}>{fmtSigned(t.pnl)}</td></tr>)}</tbody></table></section>
   </main>
 }
 function Metric({icon,label,value,sub,tone=''}){return <div className="metric card"><div>{icon}<span>{label}</span></div><b className={tone}>{value}</b>{sub&&<small>{sub}</small>}</div>}
