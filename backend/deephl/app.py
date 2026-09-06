@@ -30,6 +30,11 @@ async def stop():
     await engine.stop()
     return engine.snapshot()
 
+@app.post("/api/reset")
+async def reset():
+    await engine.reset_learning()
+    return engine.snapshot()
+
 @app.post("/api/market")
 async def market(req: MarketReq):
     try:

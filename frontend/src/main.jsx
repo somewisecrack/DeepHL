@@ -18,6 +18,7 @@ function App(){
       <div className="controls">
         <button className="primary" onClick={()=>fetch(API+'/api/start',{method:'POST'})} disabled={s.running}><Play size={17}/> Start training</button>
         <button onClick={()=>fetch(API+'/api/stop',{method:'POST'})} disabled={!s.running}><Pause size={17}/> Stop</button>
+        <button className="danger" onClick={()=>{ if(confirm('Archive current checkpoint/replay and restart learning from scratch?')) fetch(API+'/api/reset',{method:'POST'}) }}><Zap size={17}/> Reset learning</button>
       </div>
       <div className="status"><span className={s.running?'dot live':'dot'} /> {s.running?'LIVE TRAINING':'PAUSED'} · {s.coin} · WS {s.wsStatus || 'idle'} · L2 #{s.bookUpdates || 0} · age {s.bookAgeMs || 0}ms</div>
     </section>

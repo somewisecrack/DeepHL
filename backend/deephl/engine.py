@@ -28,8 +28,7 @@ class DeepHLEngine:
         self.ws_task: asyncio.Task | None = None
         self.loop_task: asyncio.Task | None = None
         self.step = 0
-        self.last_state: list[float] | None = None
-        self.last_action: int | None = None
+        self.last_equity: float | None = None
         self.last_result = {"action":"WAIT","reward":0,"equity":0,"realized":0,"reason":"idle"}
         self.last_q = [0.0] * 5
         self.subscribers: set[asyncio.Queue] = set()
@@ -48,6 +47,24 @@ class DeepHLEngine:
         self.replay.compact()
         await self._publish()
 
+    async def reset_learning(self):
+        was = self.running
+        if was:
+            await self.stop()
+        ts = int(time.time())
+        for path in [self.data_dir / "replay" / f"{self.market_label}.jsonl", self.data_dir / "checkpoints" / f"{self.market_label}.npz"]:
+            if path.exists():
+                path.rename(path.with_name(f"{path.stem}.bad-reward-archive-{ts}{path.suffix}"))
+        self.features = L2FeatureBuilder(self.depth)
+        self.broker = VirtualPerpBroker()
+        self.replay = ReplayStore(self.data_dir / "replay" / f"{self.market_label}.jsonl")
+        self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{self.market_label}.npz")
+        self.last_equity = None
+        self.last_result = {"action":"WAIT","reward":0,"equity":0,"realized":0,"reason":"reset_learning"}
+        if was:
+            await self.start()
+        await self._publish()
+
     async def set_market(self, label: str):
         if label not in DEFAULT_MARKETS: raise ValueError("unknown market")
         was = self.running
@@ -61,8 +78,7 @@ class DeepHLEngine:
         self.book_updates = 0
         self.last_book_wall_ms = 0
         self.ws_status = "idle"
-        self.last_state = None
-        self.last_action = None
+        self.last_equity = None
         if was: await self.start()
         await self._publish()
 
@@ -104,15 +120,21 @@ class DeepHLEngine:
             if state is None: continue
             mask = self.broker.mask()
             action_idx = self.agent.select(state, mask)
+            previous_equity = self.last_equity if self.last_equity is not None else self.broker.equity(book)
             result = self.broker.step(Action(action_idx), book, self.step)
+            current_equity = float(result["equity"])
+            # Correct reward accounting: credit/debit mark-to-market movement since
+            # the previous decision tick, plus any execution cost from the current action.
+            # The old version compared before/after on the same book snapshot, so HOLD
+            # rewards were always zero and the agent saw mostly fees/slippage only.
+            result["reward"] = current_equity - previous_equity
+            self.last_equity = current_equity
             next_state = self.features.build(book, self.broker.position, self.step) or state
-            if self.last_state is not None and self.last_action is not None:
-                t = Transition(self.last_state, self.last_action, float(result["reward"]), next_state, self.broker.mask(), self.broker.position is None and action_idx == Action.EXIT, int(time.time()*1000))
-                self.replay.add(t)
+            t = Transition(state, action_idx, float(result["reward"]), next_state, self.broker.mask(), self.broker.position is None and action_idx == Action.EXIT, int(time.time()*1000))
+            self.replay.add(t)
             if len(self.replay.data) >= 64:
                 self.agent.train(self.replay.sample(64))
             if self.agent.updates and self.agent.updates % 100 == 0: self.agent.save()
-            self.last_state, self.last_action = next_state, action_idx
             self.last_result = result
             self.last_q = [float(x) for x in self.agent.q_values(state)]
             await self._publish()

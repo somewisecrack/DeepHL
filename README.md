@@ -67,6 +67,7 @@ data/
 - Replay is appended on every transition.
 - Checkpoints save every 100 updates and on stop.
 - Replay compacts on stop.
+- Reset Learning archives the current replay/checkpoint and starts clean.
 - Market-specific learning state is restored on app restart.
 
 This survives app/backend restarts and browser closes. It does not survive deleting the repo/data directory.
@@ -116,11 +117,13 @@ Holding: HOLD, EXIT
 
 ## Reward
 
-Reward is executable virtual equity change:
+Reward is executable virtual equity change across decision ticks:
 
 ```text
-reward_t = virtual_equity_t - virtual_equity_t_minus_1
+reward_t = executable_virtual_equity_after_action_t - executable_virtual_equity_after_action_t_minus_1
 ```
+
+This includes mark-to-market movement while holding, plus execution costs when entering/exiting.
 
 Virtual entries/exits walk the visible L2 book and include taker fees.
 
