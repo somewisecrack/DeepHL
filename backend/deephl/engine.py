@@ -23,6 +23,7 @@ class DeepHLEngine:
         self.latest_book: L2Book | None = None
         self.book_updates = 0
         self.last_book_wall_ms = 0
+        self.last_decision_book_time_ms = 0
         self.ws_status = "idle"
         self.running = False
         self.ws_task: asyncio.Task | None = None
@@ -67,16 +68,15 @@ class DeepHLEngine:
         }
 
     async def refresh_costs(self):
-        try:
-            costs = await asyncio.to_thread(self._load_hyperliquid_costs_sync)
-            self.broker.set_costs(**costs)
-        except Exception as e:
-            self.broker.set_costs(cross_fee_rate=0.0, add_fee_rate=0.0, funding_rate_hourly=0.0, source=f"load_failed:{type(e).__name__}")
+        costs = await asyncio.to_thread(self._load_hyperliquid_costs_sync)
+        self.broker.set_costs(**costs)
         await self._publish()
 
     async def start(self):
         if self.running: return
         await self.refresh_costs()
+        if not self.broker.costs_loaded:
+            raise RuntimeError("HyperLiquid costs were not loaded; refusing to train with synthetic costs")
         self.running = True
         self.ws_task = asyncio.create_task(self._ws_loop())
         self.loop_task = asyncio.create_task(self._decision_loop())
@@ -96,13 +96,14 @@ class DeepHLEngine:
         ts = int(time.time())
         for path in [self.data_dir / "replay" / f"{self.market_label}.jsonl", self.data_dir / "checkpoints" / f"{self.market_label}.npz"]:
             if path.exists():
-                path.rename(path.with_name(f"{path.stem}.bad-reward-archive-{ts}{path.suffix}"))
+                path.rename(path.with_name(f"{path.stem}.archive-{ts}{path.suffix}"))
         self.features = L2FeatureBuilder(self.depth)
         self.broker = VirtualPerpBroker()
         await self.refresh_costs()
         self.replay = ReplayStore(self.data_dir / "replay" / f"{self.market_label}.jsonl")
         self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{self.market_label}.npz")
         self.last_equity = None
+        self.last_decision_book_time_ms = 0
         self.last_result = {"action":"WAIT","reward":0,"equity":0,"realized":0,"reason":"reset_learning"}
         if was:
             await self.start()
@@ -121,6 +122,7 @@ class DeepHLEngine:
         self.latest_book = None
         self.book_updates = 0
         self.last_book_wall_ms = 0
+        self.last_decision_book_time_ms = 0
         self.ws_status = "idle"
         self.last_equity = None
         if was: await self.start()
@@ -158,7 +160,9 @@ class DeepHLEngine:
         while self.running:
             await asyncio.sleep(1)
             book = self.latest_book
-            if not book: continue
+            if not book or book.time_ms == self.last_decision_book_time_ms:
+                continue
+            self.last_decision_book_time_ms = book.time_ms
             self.step += 1
             state = self.features.build(book, self.broker.position, self.step)
             if state is None: continue

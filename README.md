@@ -132,6 +132,8 @@ Cost model:
 - DeepHL applies market-crossing fees for virtual marketable fills, because the simulator walks the displayed L2 book immediately instead of posting passive orders.
 - No private keys are used, so user-specific VIP/staking/referral fee tiers are not assumed unless exposed by the public response used by the app.
 - The dashboard displays the active fee/funding values and the HyperLiquid source used.
+- Training refuses to start if HyperLiquid cost data cannot be loaded; it does not fall back to zero or synthetic fees.
+- The RL loop acts only once per fresh L2 book update, avoiding repeated decisions on stale snapshots.
 
 Virtual entries/exits walk the visible L2 book and include taker fees.
 

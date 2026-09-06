@@ -11,6 +11,7 @@ class VirtualPerpBroker:
         self.add_fee_rate = 0.0
         self.funding_rate_hourly = 0.0
         self.cost_source = "not_loaded"
+        self.costs_loaded = False
         self.max_hold_steps = max_hold_steps
         self.cash_pnl = 0.0
         self.position: Position | None = None
@@ -22,6 +23,7 @@ class VirtualPerpBroker:
         self.add_fee_rate = float(add_fee_rate)
         self.funding_rate_hourly = float(funding_rate_hourly)
         self.cost_source = source
+        self.costs_loaded = source.startswith("hyperliquid_info:")
 
     def mask(self) -> list[bool]:
         return [True, True, True, False, False] if self.position is None else [False, False, False, True, True]
@@ -80,6 +82,7 @@ class VirtualPerpBroker:
             "addFeeRate": self.add_fee_rate,
             "fundingRateHourly": self.funding_rate_hourly,
             "source": self.cost_source,
+            "loaded": self.costs_loaded,
         }
 
     def _apply_funding(self, book: L2Book, now_ms: int):

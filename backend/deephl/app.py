@@ -22,7 +22,10 @@ def state():
 
 @app.post("/api/start")
 async def start():
-    await engine.start()
+    try:
+        await engine.start()
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
     return engine.snapshot()
 
 @app.post("/api/stop")
