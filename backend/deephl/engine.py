@@ -30,6 +30,9 @@ class DeepHLEngine:
         self.loop_task: asyncio.Task | None = None
         self.step = 0
         self.last_equity: float | None = None
+        self.pending_state: list[float] | None = None
+        self.pending_action: int | None = None
+        self.pending_done: bool = False
         self.last_result = {"action":"WAIT","reward":0,"equity":0,"realized":0,"reason":"idle"}
         self.last_q = [0.0] * 5
         self.subscribers: set[asyncio.Queue] = set()
@@ -115,6 +118,9 @@ class DeepHLEngine:
         self.ws_status = "idle"
         self.step = 0
         self.last_equity = None
+        self.pending_state = None
+        self.pending_action = None
+        self.pending_done = False
         self.last_q = [0.0] * 5
         self.last_result = {"action":"WAIT","reward":0,"equity":0,"realized":0,"reason":"reset_learning"}
         await self._publish()
@@ -135,6 +141,9 @@ class DeepHLEngine:
         self.last_decision_book_time_ms = 0
         self.ws_status = "idle"
         self.last_equity = None
+        self.pending_state = None
+        self.pending_action = None
+        self.pending_done = False
         if was: await self.start()
         await self._publish()
 
@@ -174,27 +183,42 @@ class DeepHLEngine:
                 continue
             self.last_decision_book_time_ms = book.time_ms
             self.step += 1
-            state = self.features.build(book, self.broker.position, self.step)
-            if state is None: continue
-            mask = self.broker.mask()
-            action_idx = self.agent.select(state, mask)
+            state_before_action = self.features.build(book, self.broker.position, self.step)
+            if state_before_action is None: continue
             previous_equity = self.last_equity if self.last_equity is not None else self.broker.equity(book)
+
+            # First close the previous transition using the new fresh L2 book. This
+            # aligns mark-to-market reward with the action that created/held the
+            # exposure during the interval that just elapsed.
+            if self.pending_state is not None and self.pending_action is not None:
+                interval_reward = self.broker.equity(book) - previous_equity
+                t = Transition(self.pending_state, self.pending_action, float(interval_reward), state_before_action, self.broker.mask(), self.pending_done, int(time.time()*1000))
+                self.replay.add(t)
+                if len(self.replay.data) >= 64:
+                    self.agent.train(self.replay.sample(64))
+                if self.agent.updates and self.agent.updates % 100 == 0: self.agent.save()
+                self.last_result["reward"] = float(interval_reward)
+
+            mask = self.broker.mask()
+            action_idx = self.agent.select(state_before_action, mask)
             result = self.broker.step(Action(action_idx), book, self.step)
             current_equity = float(result["equity"])
-            # Correct reward accounting: credit/debit mark-to-market movement since
-            # the previous decision tick, plus any execution cost from the current action.
-            # The old version compared before/after on the same book snapshot, so HOLD
-            # rewards were always zero and the agent saw mostly fees/slippage only.
-            result["reward"] = current_equity - previous_equity
+            # Immediate execution cost/slippage from the chosen action is recorded
+            # now. Future book movement is credited to this action on the next
+            # fresh update through the pending transition above.
             self.last_equity = current_equity
-            next_state = self.features.build(book, self.broker.position, self.step) or state
-            t = Transition(state, action_idx, float(result["reward"]), next_state, self.broker.mask(), self.broker.position is None and action_idx == Action.EXIT, int(time.time()*1000))
-            self.replay.add(t)
-            if len(self.replay.data) >= 64:
-                self.agent.train(self.replay.sample(64))
+            state_after_action = self.features.build(book, self.broker.position, self.step) or state_before_action
+            if result["reason"].startswith("enter") or result["reason"] in {"exit", "forced_exit_max_hold"}:
+                t = Transition(state_before_action, action_idx, float(result["reward"]), state_after_action, self.broker.mask(), self.broker.position is None and action_idx == Action.EXIT, int(time.time()*1000))
+                self.replay.add(t)
+                if len(self.replay.data) >= 64:
+                    self.agent.train(self.replay.sample(64))
+            self.pending_state = state_after_action
+            self.pending_action = action_idx
+            self.pending_done = self.broker.position is None and action_idx == Action.EXIT
             if self.agent.updates and self.agent.updates % 100 == 0: self.agent.save()
             self.last_result = result
-            self.last_q = [float(x) for x in self.agent.q_values(state)]
+            self.last_q = [float(x) for x in self.agent.q_values(state_before_action)]
             await self._publish()
 
     def snapshot(self) -> dict:
