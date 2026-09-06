@@ -24,7 +24,7 @@ def state():
 async def start():
     try:
         await engine.start()
-    except RuntimeError as e:
+    except Exception as e:
         raise HTTPException(503, str(e))
     return engine.snapshot()
 
@@ -44,6 +44,8 @@ async def market(req: MarketReq):
         await engine.set_market(req.market)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(503, str(e))
     return engine.snapshot()
 
 @app.get("/api/events")

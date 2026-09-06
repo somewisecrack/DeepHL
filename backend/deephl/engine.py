@@ -54,13 +54,15 @@ class DeepHLEngine:
         dex = self.coin.split(":", 1)[0] if ":" in self.coin else ""
         meta_payload = {"type": "metaAndAssetCtxs", **({"dex": dex} if dex else {})}
         meta, ctxs = post(meta_payload)
-        funding = 0.0
-        deployer_scale = 1.0
+        funding = None
+        deployer_scale = None
         for asset, ctx in zip(meta.get("universe", []), ctxs):
             if asset.get("name") == self.coin or asset.get("name") == self.coin.split(":")[-1]:
                 funding = float(ctx.get("funding") or 0.0)
                 deployer_scale = float(asset.get("deployerFeeScale") or 1.0)
                 break
+        if funding is None or deployer_scale is None:
+            raise RuntimeError(f"selected asset {self.coin} not found in HyperLiquid metaAndAssetCtxs")
         base_cross = float(fees.get("userCrossRate") or fees.get("feeSchedule", {}).get("cross") or 0.0)
         base_add = float(fees.get("userAddRate") or fees.get("feeSchedule", {}).get("add") or 0.0)
         return {
@@ -128,22 +130,33 @@ class DeepHLEngine:
     async def set_market(self, label: str):
         if label not in DEFAULT_MARKETS: raise ValueError("unknown market")
         was = self.running
+        old_label, old_coin = self.market_label, self.coin
         if was: await self.stop()
-        self.market_label, self.coin = label, DEFAULT_MARKETS[label]
-        self.features = L2FeatureBuilder(self.depth)
-        self.broker = VirtualPerpBroker()
-        await self.refresh_costs()
-        self.replay = ReplayStore(self.data_dir / "replay" / f"{label}.jsonl")
-        self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{label}.npz")
-        self.latest_book = None
-        self.book_updates = 0
-        self.last_book_wall_ms = 0
-        self.last_decision_book_time_ms = 0
-        self.ws_status = "idle"
-        self.last_equity = None
-        self.pending_state = None
-        self.pending_action = None
-        self.pending_done = False
+        try:
+            self.market_label, self.coin = label, DEFAULT_MARKETS[label]
+            new_broker = VirtualPerpBroker()
+            old_broker = self.broker
+            self.broker = new_broker
+            await self.refresh_costs()
+            self.features = L2FeatureBuilder(self.depth)
+            self.replay = ReplayStore(self.data_dir / "replay" / f"{label}.jsonl")
+            self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{label}.npz")
+            self.latest_book = None
+            self.book_updates = 0
+            self.last_book_wall_ms = 0
+            self.last_decision_book_time_ms = 0
+            self.ws_status = "idle"
+            self.step = 0
+            self.last_equity = None
+            self.pending_state = None
+            self.pending_action = None
+            self.pending_done = False
+            self.last_result = {"action":"WAIT","reward":0,"equity":0,"realized":0,"reason":"market_changed"}
+            self.last_q = [0.0] * 5
+        except Exception:
+            self.market_label, self.coin = old_label, old_coin
+            self.broker = old_broker if 'old_broker' in locals() else self.broker
+            raise
         if was: await self.start()
         await self._publish()
 
@@ -185,37 +198,45 @@ class DeepHLEngine:
             self.step += 1
             state_before_action = self.features.build(book, self.broker.position, self.step)
             if state_before_action is None: continue
+            first_decision = self.last_equity is None
             previous_equity = self.last_equity if self.last_equity is not None else self.broker.equity(book)
 
-            # First close the previous transition using the new fresh L2 book. This
-            # aligns mark-to-market reward with the action that created/held the
-            # exposure during the interval that just elapsed.
+            # Close the previous between-book interval using a legal passive
+            # action for that interval: HOLD while positioned, WAIT while flat.
+            # Do not write ENTER/EXIT from states where those actions are masked.
             if self.pending_state is not None and self.pending_action is not None:
                 interval_reward = self.broker.equity(book) - previous_equity
                 t = Transition(self.pending_state, self.pending_action, float(interval_reward), state_before_action, self.broker.mask(), self.pending_done, int(time.time()*1000))
                 self.replay.add(t)
                 if len(self.replay.data) >= 64:
                     self.agent.train(self.replay.sample(64))
-                if self.agent.updates and self.agent.updates % 100 == 0: self.agent.save()
                 self.last_result["reward"] = float(interval_reward)
 
             mask = self.broker.mask()
             action_idx = self.agent.select(state_before_action, mask)
             result = self.broker.step(Action(action_idx), book, self.step)
             current_equity = float(result["equity"])
-            # Immediate execution cost/slippage from the chosen action is recorded
-            # now. Future book movement is credited to this action on the next
-            # fresh update through the pending transition above.
             self.last_equity = current_equity
-            state_after_action = self.features.build(book, self.broker.position, self.step) or state_before_action
+            state_after_action = self.features.patch_position(state_before_action, self.broker.position, self.step)
+
+            # Immediate execution cost/slippage belongs to the selected action.
             if result["reason"].startswith("enter") or result["reason"] in {"exit", "forced_exit_max_hold"}:
-                t = Transition(state_before_action, action_idx, float(result["reward"]), state_after_action, self.broker.mask(), self.broker.position is None and action_idx == Action.EXIT, int(time.time()*1000))
+                effective_idx = Action[result["action"]].value
+                t = Transition(state_before_action, effective_idx, float(result["reward"]), state_after_action, self.broker.mask(), result["reason"] in {"exit", "forced_exit_max_hold"}, int(time.time()*1000))
                 self.replay.add(t)
                 if len(self.replay.data) >= 64:
                     self.agent.train(self.replay.sample(64))
-            self.pending_state = state_after_action
-            self.pending_action = action_idx
-            self.pending_done = self.broker.position is None and action_idx == Action.EXIT
+
+            # The next between-book interval is legally represented by HOLD if
+            # we are positioned after this action, otherwise WAIT.
+            if first_decision and self.broker.position is None and result["reason"] == "wait_flat":
+                self.pending_state = None
+                self.pending_action = None
+                self.pending_done = False
+            else:
+                self.pending_state = state_after_action
+                self.pending_action = Action.HOLD.value if self.broker.position is not None else Action.WAIT.value
+                self.pending_done = False
             if self.agent.updates and self.agent.updates % 100 == 0: self.agent.save()
             self.last_result = result
             self.last_q = [float(x) for x in self.agent.q_values(state_before_action)]

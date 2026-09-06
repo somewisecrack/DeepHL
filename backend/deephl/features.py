@@ -48,6 +48,23 @@ class L2FeatureBuilder:
         out.extend([side, age, unreal_bps, fresh])
         return [float(x) for x in out]
 
+    def patch_position(self, state: list[float], position: Position | None, step: int) -> list[float]:
+        """Return a copy of an already-built book feature vector with only the
+        virtual-position fields changed. This avoids calling build() twice for
+        the same book and corrupting one-step temporal features.
+        """
+        out = list(state)
+        side = 0.0 if position is None else float(position.side)
+        age = 0.0 if position is None else clip((step - position.entry_step) / 600, 0, 10)
+        # Same-book post-action state cannot honestly know mark-to-market from a
+        # later book. Keep the already-built book-flow fields intact and patch
+        # only side/age here; future observations carry future unrealized move.
+        out[-4] = float(side)
+        out[-3] = float(age)
+        out[-2] = 0.0 if position is None else out[-2]
+        out[-1] = 1.0
+        return out
+
 
 def clip(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
