@@ -125,6 +125,14 @@ reward_t = executable_virtual_equity_after_action_t - executable_virtual_equity_
 
 This includes mark-to-market movement while holding, plus execution costs when entering/exiting.
 
+Cost model:
+
+- Fee rates are fetched from HyperLiquid public `/info` using `type: userFees`.
+- The selected perp market funding rate is fetched from `/info` using `type: metaAndAssetCtxs`.
+- DeepHL applies market-crossing fees for virtual marketable fills, because the simulator walks the displayed L2 book immediately instead of posting passive orders.
+- No private keys are used, so user-specific VIP/staking/referral fee tiers are not assumed unless exposed by the public response used by the app.
+- The dashboard displays the active fee/funding values and the HyperLiquid source used.
+
 Virtual entries/exits walk the visible L2 book and include taker fees.
 
 ## Safety

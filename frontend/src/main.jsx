@@ -29,6 +29,7 @@ function App(){
       <Metric icon={<Database/>} label="Replay" value={s.replay.toLocaleString()} sub="durable JSONL"/>
       <Metric icon={<Radio/>} label="L2 updates" value={(s.bookUpdates||0).toLocaleString()} sub={`age ${s.bookAgeMs||0}ms`}/>
       <Metric icon={<Brain/>} label="Updates" value={s.updates.toLocaleString()} sub={`ε ${s.epsilon.toFixed(3)}`}/>
+      <Metric icon={<Activity/>} label="HL taker fee" value={`${bps(s.costs?.crossFeeRate)} bps`} sub="from /info userFees"/>
     </section>
 
     <section className="card panelRow">
@@ -38,6 +39,7 @@ function App(){
       <div><label>Book time</label><strong>{s.bookExchangeTime ? new Date(s.bookExchangeTime).toLocaleTimeString() : '—'}</strong></div>
       <div><label>Position</label><strong>{s.position?`${s.position.side} @ ${num(s.position.entryPx)}`:'flat'}</strong></div>
       <div><label>Last action</label><strong>{s.lastAction}</strong><small>{s.reason}</small></div>
+      <div><label>Funding/hr</label><strong>{bps(s.costs?.fundingRateHourly)} bps</strong><small>{s.costs?.source || 'not loaded'}</small></div>
     </section>
 
     <section className="columns">
@@ -53,4 +55,5 @@ function Book({bids,asks}){const max=Math.max(1,...bids.map(x=>x.sz),...asks.map
 function Level({x,max,side}){return <div className={'level '+side}><i style={{width:`${x.sz/max*100}%`}}/><span>{num(x.px)}</span><b>{Number(x.sz).toFixed(2)}</b><em>{x.n}</em></div>}
 function num(x){return Number(x||0).toLocaleString(undefined,{maximumFractionDigits:4})}
 function fmtSigned(x){return `${x>=0?'+':''}${Number(x||0).toFixed(4)}`}
+function bps(x){return (Number(x||0)*10000).toFixed(3)}
 createRoot(document.getElementById('root')).render(<App/>);

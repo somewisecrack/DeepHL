@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio, json, time
+import asyncio, json, time, urllib.request
 from pathlib import Path
 import websockets
 from .models import Action, BookLevel, DEFAULT_MARKETS, L2Book, Transition
@@ -33,8 +33,50 @@ class DeepHLEngine:
         self.last_q = [0.0] * 5
         self.subscribers: set[asyncio.Queue] = set()
 
+    def _load_hyperliquid_costs_sync(self) -> dict:
+        def post(payload: dict):
+            req = urllib.request.Request(
+                "https://api.hyperliquid.xyz/info",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read().decode())
+
+        # Public endpoint. Without private keys/user auth, the only honest default is
+        # HyperLiquid's public base user fee schedule, not an invented config value.
+        fees = post({"type": "userFees", "user": "0x0000000000000000000000000000000000000000"})
+        dex = self.coin.split(":", 1)[0] if ":" in self.coin else ""
+        meta_payload = {"type": "metaAndAssetCtxs", **({"dex": dex} if dex else {})}
+        meta, ctxs = post(meta_payload)
+        funding = 0.0
+        deployer_scale = 1.0
+        for asset, ctx in zip(meta.get("universe", []), ctxs):
+            if asset.get("name") == self.coin or asset.get("name") == self.coin.split(":")[-1]:
+                funding = float(ctx.get("funding") or 0.0)
+                deployer_scale = float(asset.get("deployerFeeScale") or 1.0)
+                break
+        base_cross = float(fees.get("userCrossRate") or fees.get("feeSchedule", {}).get("cross") or 0.0)
+        base_add = float(fees.get("userAddRate") or fees.get("feeSchedule", {}).get("add") or 0.0)
+        return {
+            "cross_fee_rate": base_cross * deployer_scale,
+            "add_fee_rate": base_add * deployer_scale,
+            "funding_rate_hourly": funding,
+            "source": f"hyperliquid_info:userFees+metaAndAssetCtxs coin={self.coin} deployerFeeScale={deployer_scale}",
+        }
+
+    async def refresh_costs(self):
+        try:
+            costs = await asyncio.to_thread(self._load_hyperliquid_costs_sync)
+            self.broker.set_costs(**costs)
+        except Exception as e:
+            self.broker.set_costs(cross_fee_rate=0.0, add_fee_rate=0.0, funding_rate_hourly=0.0, source=f"load_failed:{type(e).__name__}")
+        await self._publish()
+
     async def start(self):
         if self.running: return
+        await self.refresh_costs()
         self.running = True
         self.ws_task = asyncio.create_task(self._ws_loop())
         self.loop_task = asyncio.create_task(self._decision_loop())
@@ -57,6 +99,7 @@ class DeepHLEngine:
                 path.rename(path.with_name(f"{path.stem}.bad-reward-archive-{ts}{path.suffix}"))
         self.features = L2FeatureBuilder(self.depth)
         self.broker = VirtualPerpBroker()
+        await self.refresh_costs()
         self.replay = ReplayStore(self.data_dir / "replay" / f"{self.market_label}.jsonl")
         self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{self.market_label}.npz")
         self.last_equity = None
@@ -72,6 +115,7 @@ class DeepHLEngine:
         self.market_label, self.coin = label, DEFAULT_MARKETS[label]
         self.features = L2FeatureBuilder(self.depth)
         self.broker = VirtualPerpBroker()
+        await self.refresh_costs()
         self.replay = ReplayStore(self.data_dir / "replay" / f"{label}.jsonl")
         self.agent = DuelingDoubleDQN(self.features.feature_size, ckpt=self.data_dir / "checkpoints" / f"{label}.npz")
         self.latest_book = None
@@ -166,6 +210,7 @@ class DeepHLEngine:
             "updates": self.agent.updates,
             "epsilon": self.agent.epsilon,
             "qValues": self.last_q,
+            "costs": self.broker.costs(),
             "trades": self.broker.trades[-50:],
         }
 
